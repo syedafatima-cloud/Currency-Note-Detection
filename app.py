@@ -7,7 +7,7 @@ from preprocess import preprocess_image, calculate_damage_percentage
 
 st.set_page_config(page_title="Currency Note Damage Detection", layout="wide")
 st.title("Currency Note Damage and Suspicious Note Detection")
-st.markdown("Covers DIP concepts from **Weeks 5–13** of the syllabus.")
+
 
 uploaded_file = st.file_uploader(
     "Upload Currency Note Image",
