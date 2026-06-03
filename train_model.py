@@ -1,91 +1,144 @@
-import os
-import cv2
-import numpy as np
-from sklearn.model_selection import train_test_split
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D
-from tensorflow.keras.layers import MaxPooling2D
-from tensorflow.keras.layers import Flatten
-from tensorflow.keras.layers import Dense
-from tensorflow.keras.layers import Dropout
-from tensorflow.keras.utils import to_categorical
-from preprocess import preprocess_image
+import json
+import tensorflow as tf
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
+from tensorflow.keras.models import Model
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
 
-DATASET_PATH = "dataset"
+DATASET_PATH = "dataset/data-rescaled"
+IMG_SIZE = 224
+BATCH_SIZE = 32
+EPOCHS_PHASE1 = 15
+EPOCHS_PHASE2 = 30
 
-CATEGORIES = [
-    "normal",
-    "torn",
-    "stained",
-    "faded",
-    "fake"
-]
-
-X = []
-y = []
-
-for category in CATEGORIES:
-    folder = os.path.join(DATASET_PATH, category)
-
-    label = CATEGORIES.index(category)
-
-    for img_name in os.listdir(folder):
-        try:
-            path = os.path.join(folder, img_name)
-
-            image = preprocess_image(path)
-
-            X.append(image)
-            y.append(label)
-
-        except:
-            pass
-
-X = np.array(X)
-y = np.array(y)
-
-y = to_categorical(y, num_classes=len(CATEGORIES))
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.2,
-    random_state=42
+# ------------------------------------------------------------------
+# Data generators with augmentation
+# ------------------------------------------------------------------
+train_datagen = ImageDataGenerator(
+    rescale=1.0 / 255,
+    validation_split=0.2,
+    rotation_range=15,
+    width_shift_range=0.1,
+    height_shift_range=0.1,
+    horizontal_flip=True,
+    zoom_range=0.1,
+    brightness_range=[0.8, 1.2],
+    shear_range=0.05,
 )
 
-model = Sequential()
+val_datagen = ImageDataGenerator(
+    rescale=1.0 / 255,
+    validation_split=0.2,
+)
 
-model.add(Conv2D(32, (3, 3), activation='relu', input_shape=(128, 128, 3)))
-model.add(MaxPooling2D((2, 2)))
+train_gen = train_datagen.flow_from_directory(
+    DATASET_PATH,
+    target_size=(IMG_SIZE, IMG_SIZE),
+    batch_size=BATCH_SIZE,
+    class_mode="categorical",
+    subset="training",
+    shuffle=True,
+)
 
-model.add(Conv2D(64, (3, 3), activation='relu'))
-model.add(MaxPooling2D((2, 2)))
+val_gen = val_datagen.flow_from_directory(
+    DATASET_PATH,
+    target_size=(IMG_SIZE, IMG_SIZE),
+    batch_size=BATCH_SIZE,
+    class_mode="categorical",
+    subset="validation",
+    shuffle=False,
+)
 
-model.add(Conv2D(128, (3, 3), activation='relu'))
-model.add(MaxPooling2D((2, 2)))
+NUM_CLASSES = len(train_gen.class_indices)
+print(f"\nDetected {NUM_CLASSES} classes:")
+for cls, idx in sorted(train_gen.class_indices.items(), key=lambda x: x[1]):
+    print(f"  [{idx}] {cls}")
+print(f"\nTraining samples : {train_gen.samples}")
+print(f"Validation samples: {val_gen.samples}\n")
 
-model.add(Flatten())
+# ------------------------------------------------------------------
+# Model — MobileNetV2 transfer learning
+# ------------------------------------------------------------------
+base_model = MobileNetV2(
+    weights="imagenet",
+    include_top=False,
+    input_shape=(IMG_SIZE, IMG_SIZE, 3),
+)
+base_model.trainable = False
 
-model.add(Dense(128, activation='relu'))
-model.add(Dropout(0.5))
-model.add(Dense(len(CATEGORIES), activation='softmax'))
+x = base_model.output
+x = GlobalAveragePooling2D()(x)
+x = Dense(256, activation="relu")(x)
+x = Dropout(0.5)(x)
+predictions = Dense(NUM_CLASSES, activation="softmax")(x)
+
+model = Model(inputs=base_model.input, outputs=predictions)
 
 model.compile(
-    optimizer='adam',
-    loss='categorical_crossentropy',
-    metrics=['accuracy']
+    optimizer="adam",
+    loss="categorical_crossentropy",
+    metrics=["accuracy"],
 )
+
+callbacks_phase1 = [
+    EarlyStopping(patience=5, restore_best_weights=True, verbose=1),
+    ReduceLROnPlateau(factor=0.5, patience=3, verbose=1),
+    ModelCheckpoint("currency_model_best.h5", save_best_only=True, verbose=1),
+]
+
+# ------------------------------------------------------------------
+# Phase 1 — train classifier head only
+# ------------------------------------------------------------------
+print("=" * 60)
+print("Phase 1: Training classifier head (base frozen)")
+print("=" * 60)
+model.fit(
+    train_gen,
+    validation_data=val_gen,
+    epochs=EPOCHS_PHASE1,
+    callbacks=callbacks_phase1,
+)
+
+# ------------------------------------------------------------------
+# Phase 2 — fine-tune last 30 layers of base
+# ------------------------------------------------------------------
+print("\n" + "=" * 60)
+print("Phase 2: Fine-tuning last 30 base layers")
+print("=" * 60)
+base_model.trainable = True
+for layer in base_model.layers[:-30]:
+    layer.trainable = False
+
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5),
+    loss="categorical_crossentropy",
+    metrics=["accuracy"],
+)
+
+callbacks_phase2 = [
+    EarlyStopping(patience=7, restore_best_weights=True, verbose=1),
+    ReduceLROnPlateau(factor=0.5, patience=3, verbose=1),
+    ModelCheckpoint("currency_model_best.h5", save_best_only=True, verbose=1),
+]
 
 model.fit(
-    X_train,
-    y_train,
-    epochs=10,
-    validation_data=(X_test, y_test)
+    train_gen,
+    validation_data=val_gen,
+    epochs=EPOCHS_PHASE2,
+    callbacks=callbacks_phase2,
 )
 
-loss, accuracy = model.evaluate(X_test, y_test)
+# ------------------------------------------------------------------
+# Evaluate and save
+# ------------------------------------------------------------------
+loss, accuracy = model.evaluate(val_gen, verbose=1)
+print(f"\nFinal Validation Accuracy: {accuracy * 100:.2f}%")
+print(f"Final Validation Loss    : {loss:.4f}")
 
-print(f"Accuracy: {accuracy * 100:.2f}%")
+model.save("currency_model.h5")
+print("\nSaved model  → currency_model.h5")
 
-model.save("model.h5")
-
-print("Model Saved Successfully")
+with open("class_labels.json", "w") as f:
+    json.dump(train_gen.class_indices, f, indent=2)
+print("Saved labels → class_labels.json")

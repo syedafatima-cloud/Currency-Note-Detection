@@ -5,10 +5,18 @@ IMG_SIZE = 600
 
 
 def preprocess_image(image_path):
-
     image = cv2.imread(image_path)
     image = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
+    return _process(image)
 
+
+def preprocess_from_array(bgr_image):
+    """Same as preprocess_image but accepts a BGR numpy array directly."""
+    image = cv2.resize(bgr_image, (IMG_SIZE, IMG_SIZE))
+    return _process(image)
+
+
+def _process(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
     # ── Week 5: Histogram Equalization ──────────────────────────────────────
@@ -65,23 +73,23 @@ def preprocess_image(image_path):
     histogram = cv2.calcHist([gray], [0], None, [256], [0, 256])
 
     return {
-        "original":        image,
-        "gray":            gray,
-        "equalized":       equalized,
-        "blurred":         blurred,
-        "noisy":           noisy,
-        "denoised":        denoised,
-        "edges":           edges,
-        "threshold":       thresh,
-        "adaptive_thresh": adaptive_thresh,
-        "morphology":      morph,
-        "morphology_open": morph_open,
-        "contours":        contour_image,
-        "fft":             fft_image,
+        "original":           image,
+        "gray":               gray,
+        "equalized":          equalized,
+        "blurred":            blurred,
+        "noisy":              noisy,
+        "denoised":           denoised,
+        "edges":              edges,
+        "threshold":          thresh,
+        "adaptive_thresh":    adaptive_thresh,
+        "morphology":         morph,
+        "morphology_open":    morph_open,
+        "contours":           contour_image,
+        "fft":                fft_image,
         "magnitude_spectrum": magnitude_spectrum,
-        "hough":           hough_image,
-        "histogram":       histogram,
-        "contour_count":   len(contours),
+        "hough":              hough_image,
+        "histogram":          histogram,
+        "contour_count":      len(contours),
     }
 
 
