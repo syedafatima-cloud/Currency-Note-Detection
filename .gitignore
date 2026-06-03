@@ -1,6 +1,11 @@
-# Created by venv; see https://docs.python.org/3/library/venv.html
 venv/
 dataset/
 model.h5
+currency_model.h5
+class_labels.json
+fake_detector_best.h5
 __pycache__/
 *.pyc
+*.pyc
+pyvenv.cfg
+temp.jpg
