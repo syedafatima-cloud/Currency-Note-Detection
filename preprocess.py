@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-IMG_SIZE = 600
+IMG_SIZE = 600  # resize target for all preprocessing steps
 
 
 def preprocess_image(image_path):
