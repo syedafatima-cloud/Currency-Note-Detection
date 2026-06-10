@@ -77,8 +77,14 @@ def run_authenticity(file_bytes: bytes, _model, _idx_to_class):
         (k for k, v in _idx_to_class.items() if "fake" in v.lower()), None
     )
     fake_prob = prob if fake_class_idx == 1 else 1.0 - prob
-    label = "Suspicious / Fake" if fake_prob >= 0.5 else "Genuine"
-    confidence = fake_prob * 100 if fake_prob >= 0.5 else (1.0 - fake_prob) * 100
+    real_prob = 1.0 - fake_prob
+    confidence = max(fake_prob, real_prob) * 100
+    if confidence < 70:
+        label = "Uncertain"
+    elif fake_prob >= 0.5:
+        label = "Suspicious / Fake"
+    else:
+        label = "Genuine"
     return label, confidence, fake_prob * 100
 
 
@@ -113,6 +119,8 @@ if uploaded_file is not None:
         acol1, acol2, acol3 = st.columns(3)
         if auth_label == "Genuine":
             acol1.success(f"Result: {auth_label}")
+        elif auth_label == "Uncertain":
+            acol1.warning("Result: Uncertain — please upload a clear currency note image")
         else:
             acol1.error(f"Result: {auth_label}")
         acol2.info(f"Confidence: {auth_conf:.1f}%")
