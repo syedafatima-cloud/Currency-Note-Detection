@@ -156,6 +156,54 @@ def calculate_damage_percentage(edges):
     return round(damage_percentage, 2)
 
 
+# ── Note Presence Detection ───────────────────────────────────────────────────
+def detect_note_presence(results):
+    """
+    Returns True if the image likely contains a currency note.
+    Uses three heuristics on the already-computed preprocess results:
+      1. Edge density  — notes have rich printing (Canny edges > 5% of pixels)
+      2. Detail sharpness — notes have fine security print (high Laplacian variance)
+      3. Rectangle detection — note boundary visible against a background
+    """
+    gray  = results["gray"]
+    edges = results["edges"]   # already computed at Canny(100, 200)
+    h, w  = gray.shape
+
+    # Metric 1 — edge density
+    edge_density = np.sum(edges > 0) / (h * w)
+
+    # Metric 2 — Laplacian variance (fine detail / sharpness)
+    lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+
+    # Metric 3 — look for a large rectangle (note lying on a surface)
+    kernel   = np.ones((7, 7), np.uint8)
+    dilated  = cv2.dilate(edges, kernel, iterations=3)
+    contours, _ = cv2.findContours(
+        dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    has_note_rect = False
+    for cnt in sorted(contours, key=cv2.contourArea, reverse=True)[:5]:
+        if cv2.contourArea(cnt) < h * w * 0.15:
+            break
+        peri   = cv2.arcLength(cnt, True)
+        approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
+        if 4 <= len(approx) <= 8:
+            _, _, bw, bh = cv2.boundingRect(approx)
+            if min(bw, bh) > 0 and 1.2 <= max(bw, bh) / min(bw, bh) <= 4.0:
+                has_note_rect = True
+                break
+
+    # Case A: note fills the frame — no clear boundary but high detail + density
+    if edge_density > 0.05 and lap_var > 300:
+        return True
+
+    # Case B: note on a surface — rectangle detected + some detail
+    if has_note_rect and edge_density > 0.03 and lap_var > 100:
+        return True
+
+    return False
+
+
 # ── Fake Note Detection — Template Matching ───────────────────────────────────
 def template_match(test_image, template_image):
     result = cv2.matchTemplate(
